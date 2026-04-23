@@ -1,5 +1,3 @@
-using namespace System.Net
-
 function Invoke-GetCippAlerts {
     <#
     .FUNCTIONALITY
@@ -9,11 +7,6 @@ function Invoke-GetCippAlerts {
     #>
     [CmdletBinding()]
     param($Request, $TriggerMetadata)
-
-    $APIName = $Request.Params.CIPPEndpoint
-    $Headers = $Request.Headers
-    Write-LogMessage -headers $Headers -API $APIName -message 'Accessed this API' -Sev 'Debug'
-
     $Alerts = [System.Collections.Generic.List[object]]::new()
     $Table = Get-CippTable -tablename CippAlerts
     $PartitionKey = Get-Date -UFormat '%Y%m%d'
@@ -60,7 +53,17 @@ function Invoke-GetCippAlerts {
                 type  = 'error'
             })
     }
-    if ((!$env:WEBSITE_RUN_FROM_PACKAGE -or [string]::IsNullOrEmpty($env:WEBSITE_RUN_FROM_PACKAGE)) -and $env:AzureWebJobsStorage -ne 'UseDevelopmentStorage=true') {
+    $PSMinVersion = [Version]'7.4.0'
+    if ($PSVersionTable.PSVersion -lt $PSMinVersion) {
+        $Alerts.Add(@{
+                title = 'PowerShell Version Out of Date'
+                Alert = ('Your CIPP API is running PowerShell {0}. PowerShell 7.4 or later is required for full compatibility. Please update your Function App to use PowerShell 7.4. For hosted customers, please contact the helpdesk.' -f $PSVersionTable.PSVersion)
+                link  = 'https://learn.microsoft.com/en-us/azure/azure-functions/functions-reference-powershell#powershell-versions'
+                type  = 'warning'
+            })
+        Write-LogMessage -message ('CIPP API is running PowerShell {0}. PowerShell 7.4 or later is required.' -f $PSVersionTable.PSVersion) -API 'Updates' -tenant 'All Tenants' -sev Alert
+    }
+    if (!(![string]::IsNullOrEmpty($env:WEBSITE_RUN_FROM_PACKAGE) -or ![string]::IsNullOrEmpty($env:DEPLOYMENT_STORAGE_CONNECTION_STRING)) -and $env:AzureWebJobsStorage -ne 'UseDevelopmentStorage=true' -and $env:NonLocalHostAzurite -ne 'true') {
         $Alerts.Add(
             @{
                 title = 'Function App in Write Mode'
@@ -72,8 +75,7 @@ function Invoke-GetCippAlerts {
     if ($Rows) { $Rows | ForEach-Object { $Alerts.Add($_) } }
     $Alerts = @($Alerts)
 
-    # Associate values to output bindings by calling 'Push-OutputBinding'.
-    Push-OutputBinding -Name Response -Value ([HttpResponseContext]@{
+    return ([HttpResponseContext]@{
             StatusCode = [HttpStatusCode]::OK
             Body       = $Alerts
         })
